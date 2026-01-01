@@ -118,6 +118,30 @@ const handleCrop = async () => {
 };
 ```
 
+## Testing Locally
+
+### Using the Test App (Recommended)
+
+We've included a complete test application in the `test-app` directory:
+
+```bash
+# 1. Build the package
+npm run build
+
+# 2. Navigate to test app
+cd test-app
+
+# 3. Install dependencies
+npm install
+
+# 4. Start the dev server
+npm run dev
+```
+
+The test app will open at `http://localhost:5173` and allows you to test all features interactively.
+
+For more testing options, see [TESTING.md](./TESTING.md).
+
 ## Basic Usage
 
 ### Simple Image Cropper

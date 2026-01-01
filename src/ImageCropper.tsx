@@ -74,6 +74,7 @@ const ImageCropper = forwardRef<ImageCropperRef, ImageCropperProps>(
     const [rotation, setRotation] = useState(initialRotation);
     const [isDragging, setIsDragging] = useState(false);
     const [isResizing, setIsResizing] = useState(false);
+    const [isCreatingCrop, setIsCreatingCrop] = useState(false);
     const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
     const [resizeHandle, setResizeHandle] = useState<string | null>(null);
     const [featureConfig, setFeatureConfig] = useState<FeatureConfig>(() => {
@@ -84,6 +85,7 @@ const ImageCropper = forwardRef<ImageCropperRef, ImageCropperProps>(
         zoom: features?.zoom ?? zoomable,
         rotation: features?.rotation ?? rotatable,
         grid: features?.grid ?? showGrid,
+        freeStyleCrop: features?.freeStyleCrop ?? true, // Enable by default
       };
     });
 
@@ -95,6 +97,7 @@ const ImageCropper = forwardRef<ImageCropperRef, ImageCropperProps>(
         zoom: features?.zoom ?? zoomable,
         rotation: features?.rotation ?? rotatable,
         grid: features?.grid ?? showGrid,
+        freeStyleCrop: features?.freeStyleCrop ?? true,
       });
     }, [features, zoomable, rotatable, showGrid]);
 
@@ -226,6 +229,21 @@ const ImageCropper = forwardRef<ImageCropperRef, ImageCropperProps>(
         ) {
           setIsDragging(true);
           setDragStart({ x: x - crop.x, y: y - crop.y });
+          return;
+        }
+
+        // Free-style crop: Click and drag anywhere to create new crop area
+        if (featureConfig.freeStyleCrop) {
+          setIsCreatingCrop(true);
+          setDragStart({ x, y });
+          // Create initial crop area at click position
+          const newCrop: CropArea = {
+            x,
+            y,
+            width: 0,
+            height: 0,
+          };
+          setCrop(newCrop);
         }
       },
       [crop, disabled, featureConfig]
@@ -241,7 +259,60 @@ const ImageCropper = forwardRef<ImageCropperRef, ImageCropperProps>(
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
 
-        if (isDragging) {
+        if (isCreatingCrop) {
+          // Create crop area while dragging
+          const startX = Math.min(dragStart.x, x);
+          const startY = Math.min(dragStart.y, y);
+          const width = Math.abs(x - dragStart.x);
+          const height = Math.abs(y - dragStart.y);
+
+          let newCrop: CropArea = {
+            x: startX,
+            y: startY,
+            width: width,
+            height: height,
+          };
+
+          // Apply aspect ratio if set
+          if (aspectRatio !== null && aspectRatio !== undefined && width > 0 && height > 0) {
+            const currentAspect = width / height;
+            if (currentAspect > aspectRatio) {
+              newCrop.height = width / aspectRatio;
+            } else {
+              newCrop.width = height * aspectRatio;
+            }
+          }
+
+          // Ensure minimum size
+          if (newCrop.width < minWidth) {
+            newCrop.width = minWidth;
+            if (aspectRatio) {
+              newCrop.height = minWidth / aspectRatio;
+            }
+          }
+          if (newCrop.height < minHeight) {
+            newCrop.height = minHeight;
+            if (aspectRatio) {
+              newCrop.width = minHeight * aspectRatio;
+            }
+          }
+
+          newCrop = constrainCrop(
+            newCrop,
+            containerDimensions.width,
+            containerDimensions.height,
+            minWidth,
+            minHeight,
+            maxWidth,
+            maxHeight,
+            aspectRatio
+          );
+
+          setCrop(newCrop);
+          if (onCropChange) {
+            onCropChange(newCrop);
+          }
+        } else if (isDragging) {
           let newCrop: CropArea = {
             x: x - dragStart.x,
             y: y - dragStart.y,
@@ -352,10 +423,11 @@ const ImageCropper = forwardRef<ImageCropperRef, ImageCropperProps>(
       const handleMouseUp = () => {
         setIsDragging(false);
         setIsResizing(false);
+        setIsCreatingCrop(false);
         setResizeHandle(null);
       };
 
-      if (isDragging || isResizing) {
+      if (isDragging || isResizing || isCreatingCrop) {
         window.addEventListener('mousemove', handleMouseMove);
         window.addEventListener('mouseup', handleMouseUp);
         return () => {
@@ -366,6 +438,7 @@ const ImageCropper = forwardRef<ImageCropperRef, ImageCropperProps>(
     }, [
       isDragging,
       isResizing,
+      isCreatingCrop,
       resizeHandle,
       dragStart,
       crop,
@@ -377,6 +450,7 @@ const ImageCropper = forwardRef<ImageCropperRef, ImageCropperProps>(
       aspectRatio,
       onCropChange,
       disabled,
+      featureConfig.freeStyleCrop,
     ]);
 
     // Handle zoom
@@ -628,7 +702,7 @@ const ImageCropper = forwardRef<ImageCropperRef, ImageCropperProps>(
     const imageStyle: React.CSSProperties = {
       transform: `scale(${zoom}) rotate(${rotation}deg)`,
       transformOrigin: 'center center',
-      transition: isDragging || isResizing ? 'none' : 'transform 0.1s',
+      transition: isDragging || isResizing || isCreatingCrop ? 'none' : 'transform 0.1s',
     };
 
     // Build class names
@@ -687,7 +761,9 @@ const ImageCropper = forwardRef<ImageCropperRef, ImageCropperProps>(
               style={{
                 ...styles.overlay,
                 backgroundColor: 'rgba(0, 0, 0, 0.5)',
+                pointerEvents: featureConfig.freeStyleCrop ? 'auto' : 'none',
               }}
+              onMouseDown={featureConfig.freeStyleCrop ? handleMouseDown : undefined}
             >
               {/* Transparent crop area */}
               <div
@@ -701,7 +777,8 @@ const ImageCropper = forwardRef<ImageCropperRef, ImageCropperProps>(
                   top: crop.y,
                   width: crop.width,
                   height: crop.height,
-                  cursor: isDragging ? 'grabbing' : (featureConfig.drag ? 'move' : 'default'),
+                  cursor: isDragging ? 'grabbing' : (isCreatingCrop ? 'crosshair' : (featureConfig.drag ? 'move' : 'default')),
+                  display: crop.width > 0 && crop.height > 0 ? 'block' : 'none',
                   ...cropAreaStyle,
                 }}
               >

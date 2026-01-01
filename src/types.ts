@@ -19,6 +19,8 @@ export interface FeatureConfig {
   rotation?: boolean;
   /** Enable/disable grid lines */
   grid?: boolean;
+  /** Enable/disable free-style crop selection (click and drag to create crop area) */
+  freeStyleCrop?: boolean;
 }
 
 export interface CustomClasses {
