@@ -1,0 +1,1 @@
+# npm-image-crop
