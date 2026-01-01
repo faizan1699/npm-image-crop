@@ -9,6 +9,7 @@ function App() {
   const cropperRef = useRef<ImageCropperRef>(null);
   const [aspectRatio, setAspectRatio] = useState<number | null>(1);
   const [isBlobNeeded, setIsBlobNeeded] = useState(false);
+  const [cursorFollowCrop, setCursorFollowCrop] = useState(false);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -119,6 +120,17 @@ function App() {
               Auto-generate Blob
             </label>
           </div>
+
+          <div className="control-group">
+            <label>
+              <input
+                type="checkbox"
+                checked={cursorFollowCrop}
+                onChange={(e) => setCursorFollowCrop(e.target.checked)}
+              />
+              Cursor Follow Crop
+            </label>
+          </div>
         </div>
 
         {imageSrc ? (
@@ -132,6 +144,9 @@ function App() {
                   aspectRatio={aspectRatio}
                   isBlobNeeded={isBlobNeeded}
                   onCropBlob={handleBlob}
+                  features={{
+                    cursorFollowCrop: cursorFollowCrop,
+                  }}
                   onCropChange={(crop) => {
                     console.log('Crop changed:', crop);
                   }}
@@ -187,6 +202,7 @@ function App() {
             <li>✅ Try different aspect ratios</li>
             <li>✅ Check console for crop, zoom, and rotation callbacks</li>
             <li>✅ Test blob generation when enabled</li>
+            <li>✅ Test cursor follow crop - crop area follows cursor movement</li>
             <li>✅ Download cropped images</li>
           </ul>
         </div>

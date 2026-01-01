@@ -77,6 +77,11 @@ const ImageCropper = forwardRef<ImageCropperRef, ImageCropperProps>(
     const [isCreatingCrop, setIsCreatingCrop] = useState(false);
     const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
     const [resizeHandle, setResizeHandle] = useState<string | null>(null);
+    const [cursorPosition, setCursorPosition] = useState({ x: 0, y: 0 });
+    const [isHovering, setIsHovering] = useState(false);
+    const [freehandPath, setFreehandPath] = useState<Array<{ x: number; y: number }>>([]);
+    const [isDrawingFreehand, setIsDrawingFreehand] = useState(false);
+    const [freehandCanvasRef, setFreehandCanvasRef] = useState<HTMLCanvasElement | null>(null);
     const [featureConfig, setFeatureConfig] = useState<FeatureConfig>(() => {
       // Merge features prop with defaults, respecting zoomable/rotatable for backward compatibility
       return {
@@ -86,6 +91,9 @@ const ImageCropper = forwardRef<ImageCropperRef, ImageCropperProps>(
         rotation: features?.rotation ?? rotatable,
         grid: features?.grid ?? showGrid,
         freeStyleCrop: features?.freeStyleCrop ?? true, // Enable by default
+        cursorFollowCrop: features?.cursorFollowCrop ?? false, // Disable by default
+        photoshopStyleSelection: features?.photoshopStyleSelection ?? false, // Disable by default
+        freehandSelection: features?.freehandSelection ?? false, // Disable by default
       };
     });
 
@@ -98,6 +106,9 @@ const ImageCropper = forwardRef<ImageCropperRef, ImageCropperProps>(
         rotation: features?.rotation ?? rotatable,
         grid: features?.grid ?? showGrid,
         freeStyleCrop: features?.freeStyleCrop ?? true,
+        cursorFollowCrop: features?.cursorFollowCrop ?? false,
+        photoshopStyleSelection: features?.photoshopStyleSelection ?? false,
+        freehandSelection: features?.freehandSelection ?? false,
       });
     }, [features, zoomable, rotatable, showGrid]);
 
@@ -232,8 +243,8 @@ const ImageCropper = forwardRef<ImageCropperRef, ImageCropperProps>(
           return;
         }
 
-        // Free-style crop: Click and drag anywhere to create new crop area
-        if (featureConfig.freeStyleCrop) {
+        // Photoshop-style selection or Free-style crop: Click and drag anywhere to create new crop area
+        if (featureConfig.photoshopStyleSelection || featureConfig.freeStyleCrop) {
           setIsCreatingCrop(true);
           setDragStart({ x, y });
           // Create initial crop area at click position
@@ -258,6 +269,47 @@ const ImageCropper = forwardRef<ImageCropperRef, ImageCropperProps>(
 
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
+
+        // Freehand selection: Add points to path while drawing
+        if (isDrawingFreehand && featureConfig.freehandSelection) {
+          setFreehandPath((prev) => {
+            // Only add point if it's significantly different from last point (for performance)
+            if (prev.length === 0 || 
+                Math.abs(prev[prev.length - 1].x - x) > 2 || 
+                Math.abs(prev[prev.length - 1].y - y) > 2) {
+              return [...prev, { x, y }];
+            }
+            return prev;
+          });
+          return;
+        }
+
+        // Cursor follow crop feature - crop area follows cursor movement
+        if (featureConfig.cursorFollowCrop && !isDragging && !isResizing && !isCreatingCrop && !isDrawingFreehand && crop.width > 0 && crop.height > 0) {
+          let newCrop: CropArea = {
+            x: x - crop.width / 2,
+            y: y - crop.height / 2,
+            width: crop.width,
+            height: crop.height,
+          };
+
+          newCrop = constrainCrop(
+            newCrop,
+            containerDimensions.width,
+            containerDimensions.height,
+            minWidth,
+            minHeight,
+            maxWidth,
+            maxHeight,
+            aspectRatio
+          );
+
+          setCrop(newCrop);
+          if (onCropChange) {
+            onCropChange(newCrop);
+          }
+          return; // Don't process other mouse move events when cursor follow is active
+        }
 
         if (isCreatingCrop) {
           // Create crop area while dragging
@@ -421,13 +473,98 @@ const ImageCropper = forwardRef<ImageCropperRef, ImageCropperProps>(
       };
 
       const handleMouseUp = () => {
+        // Freehand selection: Close path and convert to crop area
+        if (isDrawingFreehand && featureConfig.freehandSelection && freehandPath.length > 2) {
+          // Calculate bounding box from freehand path
+          const xs = freehandPath.map(p => p.x);
+          const ys = freehandPath.map(p => p.y);
+          const minX = Math.min(...xs);
+          const maxX = Math.max(...xs);
+          const minY = Math.min(...ys);
+          const maxY = Math.max(...ys);
+
+          const newCrop: CropArea = {
+            x: minX,
+            y: minY,
+            width: maxX - minX,
+            height: maxY - minY,
+          };
+
+          // Apply constraints
+          let finalCrop = constrainCrop(
+            newCrop,
+            containerDimensions.width,
+            containerDimensions.height,
+            minWidth,
+            minHeight,
+            maxWidth,
+            maxHeight,
+            aspectRatio
+          );
+
+          setCrop(finalCrop);
+          setFreehandPath([]);
+          setIsDrawingFreehand(false);
+          if (onCropChange) {
+            onCropChange(finalCrop);
+          }
+          return;
+        }
+
+        // For Photoshop-style selection, apply constraints after mouse up
+        if (isCreatingCrop && featureConfig.photoshopStyleSelection && crop.width > 0 && crop.height > 0) {
+          let finalCrop = { ...crop };
+          
+          // Apply aspect ratio if set (after selection is complete)
+          if (aspectRatio !== null && aspectRatio !== undefined) {
+            const currentAspect = finalCrop.width / finalCrop.height;
+            if (currentAspect > aspectRatio) {
+              finalCrop.height = finalCrop.width / aspectRatio;
+            } else {
+              finalCrop.width = finalCrop.height * aspectRatio;
+            }
+          }
+
+          // Ensure minimum size
+          if (finalCrop.width < minWidth) {
+            finalCrop.width = minWidth;
+            if (aspectRatio) {
+              finalCrop.height = minWidth / aspectRatio;
+            }
+          }
+          if (finalCrop.height < minHeight) {
+            finalCrop.height = minHeight;
+            if (aspectRatio) {
+              finalCrop.width = minHeight * aspectRatio;
+            }
+          }
+
+          // Final constraint
+          finalCrop = constrainCrop(
+            finalCrop,
+            containerDimensions.width,
+            containerDimensions.height,
+            minWidth,
+            minHeight,
+            maxWidth,
+            maxHeight,
+            aspectRatio
+          );
+
+          setCrop(finalCrop);
+          if (onCropChange) {
+            onCropChange(finalCrop);
+          }
+        }
+
         setIsDragging(false);
         setIsResizing(false);
         setIsCreatingCrop(false);
+        setIsDrawingFreehand(false);
         setResizeHandle(null);
       };
 
-      if (isDragging || isResizing || isCreatingCrop) {
+      if (isDragging || isResizing || isCreatingCrop || isDrawingFreehand) {
         window.addEventListener('mousemove', handleMouseMove);
         window.addEventListener('mouseup', handleMouseUp);
         return () => {
@@ -451,6 +588,12 @@ const ImageCropper = forwardRef<ImageCropperRef, ImageCropperProps>(
       onCropChange,
       disabled,
       featureConfig.freeStyleCrop,
+      featureConfig.cursorFollowCrop,
+      featureConfig.photoshopStyleSelection,
+      featureConfig.freehandSelection,
+      freehandPath,
+      minWidth,
+      minHeight,
     ]);
 
     // Handle zoom
@@ -734,6 +877,42 @@ const ImageCropper = forwardRef<ImageCropperRef, ImageCropperProps>(
           ...containerStyle,
         }}
         onMouseDown={handleMouseDown}
+        onMouseMove={(e) => {
+          if (featureConfig.cursorFollowCrop && !isDragging && !isResizing && !isCreatingCrop) {
+            const rect = containerRef.current?.getBoundingClientRect();
+            if (rect) {
+              const x = e.clientX - rect.left;
+              const y = e.clientY - rect.top;
+              setCursorPosition({ x, y });
+              
+              // Update crop area to follow cursor
+              if (crop.width > 0 && crop.height > 0) {
+                let newCrop: CropArea = {
+                  x: x - crop.width / 2,
+                  y: y - crop.height / 2,
+                  width: crop.width,
+                  height: crop.height,
+                };
+
+                newCrop = constrainCrop(
+                  newCrop,
+                  containerDimensions.width,
+                  containerDimensions.height,
+                  minWidth,
+                  minHeight,
+                  maxWidth,
+                  maxHeight,
+                  aspectRatio
+                );
+
+                setCrop(newCrop);
+                if (onCropChange) {
+                  onCropChange(newCrop);
+                }
+              }
+            }
+          }
+        }}
       >
         <img
           ref={imageRef}
@@ -761,9 +940,10 @@ const ImageCropper = forwardRef<ImageCropperRef, ImageCropperProps>(
               style={{
                 ...styles.overlay,
                 backgroundColor: 'rgba(0, 0, 0, 0.5)',
-                pointerEvents: featureConfig.freeStyleCrop ? 'auto' : 'none',
+                pointerEvents: (featureConfig.freeStyleCrop || featureConfig.photoshopStyleSelection || featureConfig.freehandSelection) ? 'auto' : 'none',
+                cursor: featureConfig.freehandSelection ? 'crosshair' : (featureConfig.photoshopStyleSelection ? 'crosshair' : 'default'),
               }}
-              onMouseDown={featureConfig.freeStyleCrop ? handleMouseDown : undefined}
+              onMouseDown={(featureConfig.freeStyleCrop || featureConfig.photoshopStyleSelection || featureConfig.freehandSelection) ? handleMouseDown : undefined}
             >
               {/* Transparent crop area */}
               <div
@@ -777,11 +957,49 @@ const ImageCropper = forwardRef<ImageCropperRef, ImageCropperProps>(
                   top: crop.y,
                   width: crop.width,
                   height: crop.height,
-                  cursor: isDragging ? 'grabbing' : (isCreatingCrop ? 'crosshair' : (featureConfig.drag ? 'move' : 'default')),
-                  display: crop.width > 0 && crop.height > 0 ? 'block' : 'none',
+                  cursor: isDragging ? 'grabbing' : (isCreatingCrop ? (featureConfig.photoshopStyleSelection ? 'crosshair' : 'crosshair') : (featureConfig.drag ? 'move' : 'default')),
+                  display: crop.width > 0 && crop.height > 0 ? 'block' : (isCreatingCrop && featureConfig.photoshopStyleSelection ? 'block' : 'none'),
+                  opacity: isCreatingCrop && featureConfig.photoshopStyleSelection && (crop.width < minWidth || crop.height < minHeight) ? 0.5 : 1,
+                  borderStyle: featureConfig.photoshopStyleSelection && isCreatingCrop ? 'dashed' : 'solid',
+                  transition: featureConfig.photoshopStyleSelection && isCreatingCrop ? 'none' : 'all 0.1s',
                   ...cropAreaStyle,
                 }}
               >
+                {/* Freehand selection path */}
+                {isDrawingFreehand && freehandPath.length > 0 && (
+                  <svg
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      width: '100%',
+                      height: '100%',
+                      pointerEvents: 'none',
+                      zIndex: 1000,
+                    }}
+                  >
+                    <path
+                      d={`M ${freehandPath.map(p => `${p.x},${p.y}`).join(' L ')}`}
+                      fill="rgba(0, 123, 255, 0.2)"
+                      stroke="#007bff"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    {freehandPath.length > 1 && (
+                      <line
+                        x1={freehandPath[0].x}
+                        y1={freehandPath[0].y}
+                        x2={freehandPath[freehandPath.length - 1].x}
+                        y2={freehandPath[freehandPath.length - 1].y}
+                        stroke="#007bff"
+                        strokeWidth="2"
+                        strokeDasharray="5,5"
+                      />
+                    )}
+                  </svg>
+                )}
+
                 {/* Grid lines */}
                 {featureConfig.grid && (
                   <>

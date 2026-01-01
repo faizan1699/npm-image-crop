@@ -21,6 +21,12 @@ export interface FeatureConfig {
   grid?: boolean;
   /** Enable/disable free-style crop selection (click and drag to create crop area) */
   freeStyleCrop?: boolean;
+  /** Enable/disable cursor following crop preview (crop area follows cursor movement) */
+  cursorFollowCrop?: boolean;
+  /** Enable/disable Photoshop-style custom selection (smooth click and drag selection) */
+  photoshopStyleSelection?: boolean;
+  /** Enable/disable freehand/polygon selection (draw around object to select) */
+  freehandSelection?: boolean;
 }
 
 export interface CustomClasses {
